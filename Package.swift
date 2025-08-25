@@ -16,13 +16,20 @@ let package = Package(
             targets: ["Kuzco"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/ggerganov/llama.cpp", revision: "9b75f03"),
+        // Dependencies removed - using vendored llama.xcframework
     ],
     targets: [
+        .binaryTarget(
+            name: "llama",
+            path: "Vendors/llama.xcframework"
+        ),
         .target(
             name: "Kuzco",
             dependencies: [
-                .product(name: "llama", package: "llama.cpp")
+                "llama"
+            ],
+            linkerSettings: [
+                .linkedLibrary("c++")
             ]),
         .testTarget(
             name: "KuzcoTests",
