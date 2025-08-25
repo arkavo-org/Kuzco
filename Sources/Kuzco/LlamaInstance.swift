@@ -20,7 +20,7 @@ public class LlamaInstance {
 
     private var clModel: CLlamaModel?
     private var clContext: CLlamaContext?
-    private var clBatch: CLlamaBatch?
+    private var batchBox: LlamaBatchBox?
 
     private var eosHandler: EosHandler
     private var interactionFormatter: InteractionFormatting
@@ -30,7 +30,7 @@ public class LlamaInstance {
     private var interruptFlag: Bool = false
     private var loadingProgressContinuation: AsyncStream<LoadUpdate>.Continuation?
 
-    public var isReady: Bool { clModel != nil && clContext != nil && clBatch != nil }
+    public var isReady: Bool { clModel != nil && clContext != nil && batchBox != nil }
 
     public init(
         profile: ModelProfile,
@@ -48,30 +48,28 @@ public class LlamaInstance {
     }
 
     deinit {
-        let modelToFree = self.clModel
-        let contextToFree = self.clContext
-        let batchToFree = self.clBatch
-        let profileIDForLog = self.profile.id
-
+        // Cancel any ongoing operations first
+        self.interruptFlag = true
         self.loadingProgressContinuation?.finish()
-
-        if modelToFree != nil || contextToFree != nil || batchToFree != nil {
-            Task.detached { @LlamaInstanceActor in
-                if let batch = batchToFree {
-                    LlamaKitBridge.freeBatch(batch)
-                    print("Kuzco LlamaInstance (\(profileIDForLog)) C batch freed via deinit task.")
-                }
-                if let context = contextToFree {
-                    LlamaKitBridge.freeContext(context)
-                    print("Kuzco LlamaInstance (\(profileIDForLog)) C context freed via deinit task.")
-                }
-                if let model = modelToFree {
-                    LlamaKitBridge.freeModel(model)
-                    print("Kuzco LlamaInstance (\(profileIDForLog)) C model freed via deinit task.")
-                }
-            }
+        
+        // Synchronous cleanup - no async tasks here to avoid race conditions
+        // The batch wrapper will handle its own cleanup via its deinit
+        self.batchBox = nil
+        
+        // Free context and model synchronously
+        if let context = self.clContext {
+            LlamaKitBridge.freeContext(context)
+            self.clContext = nil
+            print("Kuzco LlamaInstance (\(profile.id)) context freed.")
         }
-        print("Kuzco LlamaInstance for \(profileIDForLog) deinit sequence initiated.")
+        
+        if let model = self.clModel {
+            LlamaKitBridge.freeModel(model)
+            self.clModel = nil
+            print("Kuzco LlamaInstance (\(profile.id)) model freed.")
+        }
+        
+        print("Kuzco LlamaInstance for \(profile.id) deinit completed.")
     }
 
 
@@ -180,9 +178,9 @@ public class LlamaInstance {
 
             // Create batch with error handling
             do {
-                self.clBatch = try LlamaKitBridge.createBatch(maxTokens: self.settings.processingBatchSize)
+                self.batchBox = LlamaBatchBox(maxTokens: self.settings.processingBatchSize)
                 publishProgress(LoadUpdate(stage: .creatingContext, detail: "Token batch created."))
-            } catch {
+            } catch let error {
                 throw KuzcoError.batchCreationFailed
             }
 
@@ -211,7 +209,7 @@ public class LlamaInstance {
     }
 
     private func prewarmEngine() async throws {
-        guard let model = clModel, let context = clContext, self.clBatch != nil else {
+        guard let model = clModel, let context = clContext, let batch = self.batchBox else {
             throw KuzcoError.engineNotReady
         }
         do {
@@ -219,11 +217,15 @@ public class LlamaInstance {
             let tokens = try LlamaKitBridge.tokenize(text: warmUpPrompt, model: model, addBos: true, parseSpecial: true)
             guard !tokens.isEmpty else { throw KuzcoError.warmUpRoutineFailed(details: "Warm-up tokenization resulted in no tokens.") }
 
-            LlamaKitBridge.clearBatch(&self.clBatch!)
-            LlamaKitBridge.addTokenToBatch(batch: &self.clBatch!, token: tokens[0], position: 0, sequenceId: 0, enableLogits: true)
+            batch.clear()
+            batch.withBatch { batchPtr in
+                LlamaKitBridge.addTokenToBatch(batch: batchPtr, token: tokens[0], position: 0, sequenceId: 0, enableLogits: true)
+            }
 
             LlamaKitBridge.setThreads(for: context, mainThreads: 1, batchThreads: 1)
-            try LlamaKitBridge.processBatch(context: context, batch: self.clBatch!)
+            try batch.withBatch { batchPtr in
+                try LlamaKitBridge.processBatch(context: context, batch: batchPtr)
+            }
             LlamaKitBridge.clearKeyValueCache(context: context)
             currentContextTokens.removeAll()
         } catch {
@@ -232,7 +234,8 @@ public class LlamaInstance {
     }
 
     public func performShutdown() async {
-        if let batch = clBatch { LlamaKitBridge.freeBatch(batch); clBatch = nil }
+        self.interruptFlag = true
+        self.batchBox = nil
         if let context = clContext { LlamaKitBridge.freeContext(context); clContext = nil }
         if let model = clModel { LlamaKitBridge.freeModel(model); clModel = nil }
 
@@ -246,7 +249,8 @@ public class LlamaInstance {
     }
 
     private func performShutdownInternal() async {
-        if let batch = clBatch { LlamaKitBridge.freeBatch(batch); clBatch = nil }
+        self.interruptFlag = true
+        self.batchBox = nil
         if let context = clContext { LlamaKitBridge.freeContext(context); clContext = nil }
         if let model = clModel { LlamaKitBridge.freeModel(model); clModel = nil }
         currentContextTokens.removeAll()
@@ -321,7 +325,7 @@ public class LlamaInstance {
 
         return AsyncThrowingStream { continuation in
             Task { @LlamaInstanceActor [] in
-                guard let model = self.clModel, let context = self.clContext, self.clBatch != nil else {
+                guard let model = self.clModel, let context = self.clContext, let batch = self.batchBox else {
                     continuation.finish(throwing: KuzcoError.engineNotReady)
                     return
                 }
@@ -360,22 +364,27 @@ public class LlamaInstance {
                     if !newTokensToProcess.isEmpty {
                         var evalIndex = 0
                         while evalIndex < newTokensToProcess.count {
-                            guard self.clBatch != nil else { throw KuzcoError.batchCreationFailed }
-                            LlamaKitBridge.clearBatch(&self.clBatch!)
+                            guard let batch = self.batchBox else { throw KuzcoError.batchCreationFailed }
+                            batch.clear()
 
                             var physicalBatchTokenCount: Int32 = 0
 
                             let batchEndIndex = min(evalIndex + Int(self.settings.processingBatchSize), newTokensToProcess.count)
                             for i in evalIndex..<batchEndIndex {
-                                LlamaKitBridge.addTokenToBatch(batch: &self.clBatch!, token: newTokensToProcess[i], position: kvCachePosition + Int32(i - evalIndex), sequenceId: 0, enableLogits: false)
+                                batch.withBatch { batchPtr in
+                                    LlamaKitBridge.addTokenToBatch(batch: batchPtr, token: newTokensToProcess[i], position: kvCachePosition + Int32(i - evalIndex), sequenceId: 0, enableLogits: false)
+                                }
                                 physicalBatchTokenCount += 1
                             }
 
-                            guard self.clBatch != nil else { throw KuzcoError.batchCreationFailed }
-                            self.clBatch!.logits[Int(physicalBatchTokenCount) - 1] = 1
+                            batch.withBatch { batchPtr in
+                                batchPtr.pointee.logits[Int(physicalBatchTokenCount) - 1] = 1
+                            }
 
                             LlamaKitBridge.setThreads(for: context, mainThreads: self.settings.cpuThreadCount, batchThreads: self.settings.cpuThreadCount)
-                            try LlamaKitBridge.processBatch(context: context, batch: self.clBatch!)
+                            try batch.withBatch { batchPtr in
+                                try LlamaKitBridge.processBatch(context: context, batch: batchPtr)
+                            }
                             kvCachePosition += physicalBatchTokenCount
                             evalIndex = batchEndIndex
                             if self.interruptFlag { 
@@ -397,8 +406,9 @@ public class LlamaInstance {
                             continuation.finish()
                             return
                         }
-                        guard self.clBatch != nil else { throw KuzcoError.engineNotReady }
-                        guard let logits = LlamaKitBridge.getLogitsOutput(context: context, fromBatchTokenIndex: self.clBatch!.n_tokens - 1 ) else {
+                        guard let batch = self.batchBox else { throw KuzcoError.engineNotReady }
+                        let logitsIndex = batch.withBatch { $0.pointee.n_tokens - 1 }
+                        guard let logits = LlamaKitBridge.getLogitsOutput(context: context, fromBatchTokenIndex: logitsIndex) else {
                             throw KuzcoError.predictionFailed(details: "Failed to retrieve logits.")
                         }
 
@@ -456,12 +466,16 @@ public class LlamaInstance {
                         }
 
                         self.currentContextTokens.append(sampledToken)
-                        guard self.clBatch != nil else { throw KuzcoError.batchCreationFailed }
-                        LlamaKitBridge.clearBatch(&self.clBatch!)
-                        LlamaKitBridge.addTokenToBatch(batch: &self.clBatch!, token: sampledToken, position: kvCachePosition, sequenceId: 0, enableLogits: true)
+                        guard let batch = self.batchBox else { throw KuzcoError.batchCreationFailed }
+                        batch.clear()
+                        batch.withBatch { batchPtr in
+                            LlamaKitBridge.addTokenToBatch(batch: batchPtr, token: sampledToken, position: kvCachePosition, sequenceId: 0, enableLogits: true)
+                        }
 
                         LlamaKitBridge.setThreads(for: context, mainThreads: self.settings.cpuThreadCount, batchThreads: self.settings.cpuThreadCount)
-                        try LlamaKitBridge.processBatch(context: context, batch: self.clBatch!)
+                        try batch.withBatch { batchPtr in
+                            try LlamaKitBridge.processBatch(context: context, batch: batchPtr)
+                        }
 
                         kvCachePosition += 1
                         tokensGeneratedThisTurn += 1

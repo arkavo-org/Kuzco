@@ -234,30 +234,30 @@ enum LlamaKitBridge {
         llama_batch_free(batch)
     }
 
-    static func clearBatch(_ batch: inout CLlamaBatch) {
-        batch.n_tokens = 0
+    static func clearBatch(_ batch: UnsafeMutablePointer<CLlamaBatch>) {
+        batch.pointee.n_tokens = 0
     }
 
-    static func addTokenToBatch(batch: inout CLlamaBatch, token: CLlamaToken, position: Int32, sequenceId: Int32, enableLogits: Bool) {
-        let currentTokenIndex = batch.n_tokens
+    static func addTokenToBatch(batch: UnsafeMutablePointer<CLlamaBatch>, token: CLlamaToken, position: Int32, sequenceId: Int32, enableLogits: Bool) {
+        let currentTokenIndex = batch.pointee.n_tokens
 
-        batch.token[Int(currentTokenIndex)] = token
-        batch.pos[Int(currentTokenIndex)] = llama_pos(position)
-        batch.n_seq_id[Int(currentTokenIndex)] = 1
+        batch.pointee.token[Int(currentTokenIndex)] = token
+        batch.pointee.pos[Int(currentTokenIndex)] = llama_pos(position)
+        batch.pointee.n_seq_id[Int(currentTokenIndex)] = 1
 
-        batch.seq_id[Int(currentTokenIndex)]!.pointee = llama_seq_id(sequenceId)
+        batch.pointee.seq_id[Int(currentTokenIndex)]!.pointee = llama_seq_id(sequenceId)
 
-        batch.logits[Int(currentTokenIndex)] = enableLogits ? 1 : 0
-        batch.n_tokens += 1
+        batch.pointee.logits[Int(currentTokenIndex)] = enableLogits ? 1 : 0
+        batch.pointee.n_tokens += 1
     }
 
     static func setThreads(for context: CLlamaContext, mainThreads: Int32, batchThreads: Int32) {
         llama_set_n_threads(context, mainThreads, batchThreads)
     }
 
-    static func processBatch(context: CLlamaContext, batch: CLlamaBatch) throws {
+    static func processBatch(context: CLlamaContext, batch: UnsafeMutablePointer<CLlamaBatch>) throws {
         do {
-            let result = llama_decode(context, batch)
+            let result = llama_decode(context, batch.pointee)
             if result != 0 {
                 let errorMsg = "llama_decode returned \(result). This may indicate insufficient memory, invalid batch, or model corruption."
                 print("🦙 KuzcoBridge Batch Processing Error: \(errorMsg) 🦙")
