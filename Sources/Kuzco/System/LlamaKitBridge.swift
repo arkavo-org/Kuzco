@@ -130,14 +130,33 @@ enum LlamaKitBridge {
                 
                 // Test tokenization directly here to catch the issue early
                 print("🦙 Kuzco: Testing direct tokenization... 🦙")
+                
+                // First test: Get required token count (this is what was crashing)
                 let testText = "test"
-                let result = testText.withCString { cstr in
+                print("🦙 Kuzco: Step 1 - Getting required token count... 🦙")
+                let requiredCount = testText.withCString { cstr in
+                    // Pass nil for tokens to get count - THIS IS WHERE IT CRASHES
                     llama_tokenize(modelPtr, cstr, Int32(strlen(cstr)), nil, 0, false, false)
                 }
-                print("🦙 Kuzco: Direct tokenization test result: \(result) 🦙")
                 
-                if result < 0 {
-                    print("🦙 Kuzco WARNING: Tokenization test indicates potential issue (negative result) 🦙")
+                if requiredCount != 0 {
+                    print("🦙 Kuzco: Required token count: \(requiredCount) 🦙")
+                    
+                    // Only try actual tokenization if we got a valid count
+                    if requiredCount > 0 {
+                        print("🦙 Kuzco: Step 2 - Performing actual tokenization... 🦙")
+                        var tokens = [llama_token](repeating: 0, count: Int(requiredCount))
+                        let actualCount = tokens.withUnsafeMutableBufferPointer { buffer in
+                            testText.withCString { cstr in
+                                llama_tokenize(modelPtr, cstr, Int32(strlen(cstr)), buffer.baseAddress, Int32(buffer.count), false, false)
+                            }
+                        }
+                        print("🦙 Kuzco: Actual tokenization returned \(actualCount) tokens 🦙")
+                    }
+                } else {
+                    print("🦙 Kuzco ERROR: Getting token count failed (returned 0) 🦙")
+                    print("🦙 Kuzco: This indicates the tokenizer is not properly initialized 🦙")
+                    throw KuzcoError.modelInitializationFailed(details: "Gemma model tokenizer initialization failed. The model loads but cannot tokenize text.")
                 }
             }
             
