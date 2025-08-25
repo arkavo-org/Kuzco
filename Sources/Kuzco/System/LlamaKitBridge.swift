@@ -281,7 +281,8 @@ enum LlamaKitBridge {
     
     static func clearKeyValueCache(context: CLlamaContext) {
         do {
-            llama_kv_cache_clear(context)
+            let memory = llama_get_memory(context)
+            llama_memory_clear(memory, false)
             print("🦙 Kuzco - KV cache cleared successfully 🦙")
         } catch {
             print("🦙 Kuzco - Warning: Error clearing KV cache: \(error.localizedDescription) 🦙")
@@ -290,7 +291,8 @@ enum LlamaKitBridge {
 
     static func removeTokensFromKeyValueCache(context: CLlamaContext, sequenceId: Int32, fromPosition start: Int32, toPosition end: Int32) {
         do {
-            llama_kv_cache_seq_rm(context, llama_seq_id(sequenceId), llama_pos(start), llama_pos(end))
+            let memory = llama_get_memory(context)
+            _ = llama_memory_seq_rm(memory, llama_seq_id(sequenceId), llama_pos(start), llama_pos(end))
         } catch {
             print("🦙 Kuzco - Warning: Error removing tokens from KV cache: \(error.localizedDescription) 🦙")
         }
