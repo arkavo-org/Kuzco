@@ -114,15 +114,14 @@ enum LlamaKitBridge {
             let diagnostics = getModelDiagnostics(model: modelPtr)
             print(diagnostics)
             
-            // Extra validation for Gemma models
-            if let arch = getModelArchitecture(model: modelPtr), 
-               arch.lowercased().contains("gemma") {
-                print("🦙 Kuzco: Gemma model detected, performing extra validation... 🦙")
+            // Validation for all models
+            if let arch = getModelArchitecture(model: modelPtr) {
+                print("🦙 Kuzco: Model architecture: \(arch) 🦙")
                 
                 // Get the vocab object
                 guard let vocab = llama_model_get_vocab(modelPtr) else {
-                    print("🦙 Kuzco ERROR: Failed to get vocab object for Gemma model! 🦙")
-                    throw KuzcoError.modelInitializationFailed(details: "Gemma model loaded but vocab object is null")
+                    print("🦙 Kuzco ERROR: Failed to get vocab object! 🦙")
+                    throw KuzcoError.modelInitializationFailed(details: "Model loaded but vocab object is null")
                 }
                 
                 // Check vocab type
@@ -133,41 +132,41 @@ enum LlamaKitBridge {
                 let tokenCount = llama_vocab_n_tokens(vocab)
                 print("🦙 Kuzco: Token count: \(tokenCount) 🦙")
                 
-                // Try to get a specific token to verify vocab is working
+                // Get special tokens
                 let bosToken = llama_vocab_bos(vocab)
                 let eosToken = llama_vocab_eos(vocab)
                 print("🦙 Kuzco: BOS token: \(bosToken), EOS token: \(eosToken) 🦙")
                 
-                // Test tokenization directly here to catch the issue early
-                print("🦙 Kuzco: Testing direct tokenization... 🦙")
-                
-                // WORKAROUND: Skip tokenization test for Gemma models
-                // The tokenizer crashes when called with nil buffer (two-pass pattern)
-                // But might work with a pre-allocated buffer
-                print("🦙 Kuzco WARNING: Skipping tokenization test for Gemma 🦙")
-                print("🦙 Kuzco: Known issue - tokenizer crashes with nil buffer 🦙")
-                print("🦙 Kuzco: Will attempt single-pass tokenization with pre-allocated buffer 🦙")
-                
-                // Try single-pass with generous buffer instead
+                // Test tokenization with standard two-pass pattern
+                print("🦙 Kuzco: Testing two-pass tokenization... 🦙")
                 let testText = "test"
-                var tokens = [llama_token](repeating: 0, count: 100)
-                print("🦙 Kuzco: Attempting single-pass tokenization with buffer... 🦙")
                 
-                let result = tokens.withUnsafeMutableBufferPointer { buffer in
-                    testText.withCString { cstr in
-                        llama_tokenize(modelPtr, cstr, Int32(strlen(cstr)), buffer.baseAddress, Int32(buffer.count), false, false)
-                    }
+                // First pass with nil buffer to get count
+                let requiredCount = testText.withCString { cstr in
+                    llama_tokenize(modelPtr, cstr, Int32(strlen(cstr)), nil, 0, false, false)
                 }
                 
-                if result > 0 {
-                    print("🦙 Kuzco SUCCESS: Single-pass tokenization worked! Got \(result) tokens 🦙")
-                    print("🦙 Kuzco: Gemma model CAN tokenize with pre-allocated buffer 🦙")
-                } else if result < 0 {
-                    print("🦙 Kuzco INFO: Tokenization returned \(result) - buffer too small, need \(-result) tokens 🦙")
-                    // This is actually OK - it means tokenization works but needs bigger buffer
+                if requiredCount > 0 || requiredCount < 0 {
+                    let neededTokens = requiredCount < 0 ? -requiredCount : requiredCount
+                    print("🦙 Kuzco: Two-pass tokenization first pass succeeded. Required tokens: \(neededTokens) 🦙")
+                    
+                    // Second pass with allocated buffer
+                    var testTokens = Array<CLlamaToken>(repeating: 0, count: Int(neededTokens))
+                    let actualCount = testTokens.withUnsafeMutableBufferPointer { buffer in
+                        testText.withCString { cstr in
+                            llama_tokenize(modelPtr, cstr, Int32(strlen(cstr)), buffer.baseAddress, Int32(buffer.count), false, false)
+                        }
+                    }
+                    
+                    if actualCount > 0 {
+                        print("🦙 Kuzco: Two-pass tokenization succeeded! Tokens: \(actualCount) 🦙")
+                    } else {
+                        print("🦙 Kuzco ERROR: Second pass of tokenization failed 🦙")
+                        throw KuzcoError.modelInitializationFailed(details: "Tokenizer second pass failed")
+                    }
                 } else {
-                    print("🦙 Kuzco ERROR: Tokenization returned 0 - complete failure 🦙")
-                    throw KuzcoError.modelInitializationFailed(details: "Gemma tokenizer completely non-functional")
+                    print("🦙 Kuzco ERROR: Tokenizer returned 0 tokens 🦙")
+                    throw KuzcoError.modelInitializationFailed(details: "Tokenizer returns 0 tokens")
                 }
             }
             
@@ -272,54 +271,12 @@ enum LlamaKitBridge {
         // Log tokenization attempt for debugging
         print("🦙 Tokenizing text of length \(text.count), addBos=\(addBos), parseSpecial=\(parseSpecial) 🦙")
         
-        // WORKAROUND: Check if this is a Gemma model
+        // Check model architecture for debugging
         let modelArch = getModelArchitecture(model: model)
         print("🦙 DEBUG: Model architecture detected: \(modelArch ?? "nil") 🦙")
-        let isGemma = modelArch?.lowercased().contains("gemma") ?? false
-        print("🦙 DEBUG: Is Gemma model: \(isGemma) 🦙")
         
-        if isGemma {
-            // WORKAROUND: For Gemma, use single-pass with generous buffer
-            // The two-pass pattern crashes when passing nil buffer
-            print("🦙 Using single-pass tokenization for Gemma model 🦙")
-            
-            // Estimate tokens generously (roughly 1.5 tokens per character for safety)
-            let estimatedTokens = max(100, text.count * 2)
-            var tokens = Array<CLlamaToken>(repeating: 0, count: estimatedTokens)
-            
-            let actualCount = tokens.withUnsafeMutableBufferPointer { buffer in
-                text.withCString { cstr in
-                    llama_tokenize(model, cstr, Int32(strlen(cstr)), buffer.baseAddress, Int32(buffer.count), addBos, parseSpecial)
-                }
-            }
-            
-            if actualCount > 0 {
-                // Success - return only the used tokens
-                return Array(tokens.prefix(Int(actualCount)))
-            } else if actualCount < 0 {
-                // Buffer too small - try again with exact size
-                let neededSize = -actualCount
-                print("🦙 Buffer too small, retrying with size \(neededSize) 🦙")
-                
-                var biggerTokens = Array<CLlamaToken>(repeating: 0, count: Int(neededSize))
-                let retryCount = biggerTokens.withUnsafeMutableBufferPointer { buffer in
-                    text.withCString { cstr in
-                        llama_tokenize(model, cstr, Int32(strlen(cstr)), buffer.baseAddress, Int32(buffer.count), addBos, parseSpecial)
-                    }
-                }
-                
-                if retryCount > 0 {
-                    return Array(biggerTokens.prefix(Int(retryCount)))
-                } else {
-                    throw KuzcoError.tokenizationFailed(details: "Gemma tokenization failed even with correctly sized buffer")
-                }
-            } else {
-                throw KuzcoError.tokenizationFailed(details: "Gemma tokenization returned 0 tokens")
-            }
-        }
-        
-        // Standard two-pass tokenization for non-Gemma models
-        print("🦙 DEBUG: About to call two-pass tokenization 🦙")
+        // Standard two-pass tokenization for ALL models (including Gemma)
+        print("🦙 DEBUG: Using two-pass tokenization 🦙")
         print("🦙 DEBUG: Model pointer: \(model) 🦙")
         print("🦙 DEBUG: Text length: \(text.count) 🦙")
         print("🦙 DEBUG: addBos=\(addBos), parseSpecial=\(parseSpecial) 🦙")
