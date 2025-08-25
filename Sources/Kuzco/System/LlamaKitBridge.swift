@@ -194,6 +194,25 @@ enum LlamaKitBridge {
             throw KuzcoError.tokenizationFailed(details: "Model lacks usable tokenizer. Please use a GGUF with embedded tokenizer.")
         }
         
+        // Special handling for Gemma models which may have tokenizer metadata but broken implementation
+        if let arch = getModelArchitecture(model: model), arch.lowercased().contains("gemma") {
+            print("🦙 KuzcoBridge Warning: Gemma model detected - tokenizer may be incompatible 🦙")
+            
+            // For Gemma, we need to handle the case where metadata says tokenizer exists but it crashes
+            // This is a known issue with some Gemma GGUF files
+            // The safest approach is to fail gracefully
+            throw KuzcoError.tokenizationFailed(details: """
+                Gemma model tokenizer is incompatible. This is a known issue with some Gemma GGUF files.
+                
+                Solutions:
+                1. Use a different Gemma GGUF file (look for ones explicitly marked 'tokenizer included')
+                2. Reconvert from HuggingFace with: python convert-hf-to-gguf.py --model google/gemma-3-270m-it
+                3. Try a different model architecture (Llama, Mistral, etc.)
+                
+                The tokenizer metadata exists but the implementation crashes. This requires a properly converted GGUF.
+                """)
+        }
+        
         let maxTokenCount = text.utf8.count + (addBos ? 1 : 0) + 1
         var tokens = [CLlamaToken](repeating: 0, count: maxTokenCount)
 
