@@ -274,9 +274,22 @@ public class LlamaInstance {
             }
             
             // Get model architecture for debugging
-            if let arch = LlamaKitBridge.getModelArchitecture(model: model) {
+            let modelArch = LlamaKitBridge.getModelArchitecture(model: model)
+            if let arch = modelArch {
                 print("🦙 Kuzco: Model architecture: \(arch) 🦙")
             }
+            
+            // Log llama.cpp commit to verify version match
+            var commitBuf = [CChar](repeating: 0, count: 128)
+            _ = commitBuf.withUnsafeMutableBufferPointer { ptr in
+                llama_model_meta_val_str(model, "llama.cpp.commit", ptr.baseAddress, ptr.count)
+            }
+            if commitBuf[0] != 0 {
+                print("🦙 Kuzco: Model built with llama.cpp commit: \(String(cString: commitBuf)) 🦙")
+            }
+            
+            // For debugging: log which library we're actually using
+            print("🦙 Kuzco: Binary loaded from: \(Bundle(for: type(of: self)).bundlePath) 🦙")
             
             // Use model's preference for BOS token and special parsing
             let addBos = LlamaKitBridge.shouldAddBOSToken(model: model)

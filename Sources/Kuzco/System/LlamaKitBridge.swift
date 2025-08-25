@@ -73,7 +73,10 @@ enum LlamaKitBridge {
             print("🦙 Kuzco - Attempting to load model from: \(path) 🦙")
             print("🦙 GPU layers: \(settings.offloadedGpuLayers), mmap: \(settings.enableMemoryMapping), mlock: \(settings.enableMemoryLocking) 🦙")
             
-            guard let modelPtr = llama_load_model_from_file(path, mparams) else {
+            // Log llama.cpp library version info for debugging integration issues
+            print("🦙 llama.cpp library loaded - checking version... 🦙")
+            
+            guard let modelPtr = llama_model_load_from_file(path, mparams) else {
                 // Enhanced error handling with architecture detection
                 let fileName = (path as NSString).lastPathComponent.lowercased()
                 
@@ -96,6 +99,11 @@ enum LlamaKitBridge {
             }
             
             print("🦙 Kuzco - Model loaded successfully 🦙")
+            
+            // Print full diagnostics including llama.cpp version
+            let diagnostics = getModelDiagnostics(model: modelPtr)
+            print(diagnostics)
+            
             return modelPtr
             
         } catch let error as KuzcoError {
@@ -135,7 +143,7 @@ enum LlamaKitBridge {
 
     static func freeModel(_ model: CLlamaModel) {
         do {
-            llama_free_model(model)
+            llama_model_free(model)
             print("🦙 Kuzco - Model freed successfully 🦙")
         } catch {
             print("🦙 Kuzco - Warning: Error freeing model: \(error.localizedDescription) 🦙")
@@ -154,8 +162,8 @@ enum LlamaKitBridge {
 
             print("🦙 Kuzco - Creating context with: ctx=\(settings.contextLength), batch=\(settings.processingBatchSize), threads=\(settings.cpuThreadCount) 🦙")
 
-            guard let contextPtr = llama_new_context_with_model(model, cparams) else {
-                throw KuzcoError.contextCreationFailed(details: "llama_new_context_with_model returned null. This may be due to insufficient memory or invalid context parameters.")
+            guard let contextPtr = llama_init_from_model(model, cparams) else {
+                throw KuzcoError.contextCreationFailed(details: "llama_init_from_model returned null. This may be due to insufficient memory or invalid context parameters.")
             }
             
             print("🦙 Kuzco - Context created successfully 🦙")
@@ -193,6 +201,9 @@ enum LlamaKitBridge {
             print("🦙 KuzcoBridge Error: Attempted to tokenize with model lacking tokenizer 🦙")
             throw KuzcoError.tokenizationFailed(details: "Model lacks usable tokenizer. Please use a GGUF with embedded tokenizer.")
         }
+        
+        // Log tokenization attempt for debugging
+        print("🦙 Tokenizing text of length \(text.count), addBos=\(addBos), parseSpecial=\(parseSpecial) 🦙")
         
         // Two-pass tokenization for safety with SentencePiece and other tokenizers
         // First pass: Get the required token count
@@ -330,7 +341,8 @@ enum LlamaKitBridge {
 
     static func sampleTokenGreedy(model: CLlamaModel, context: CLlamaContext, logits: UnsafeMutablePointer<Float>) -> CLlamaToken {
         do {
-            let vocabSize = llama_n_vocab(model)
+            let vocab = llama_model_get_vocab(model)
+            let vocabSize = llama_vocab_n_tokens(vocab)
             
             guard vocabSize > 0 else {
                 print("🦙 KuzcoBridge Error: Invalid vocabulary size: \(vocabSize) 🦙")
@@ -355,7 +367,8 @@ enum LlamaKitBridge {
 
     static func getBosToken(model: CLlamaModel) -> CLlamaToken {
         do {
-            return llama_token_bos(model)
+            let vocab = llama_model_get_vocab(model)
+            return llama_vocab_bos(vocab)
         } catch {
             print("🦙 KuzcoBridge Warning: Error getting BOS token: \(error.localizedDescription) 🦙")
             return 1 // Common fallback BOS token ID
@@ -364,7 +377,8 @@ enum LlamaKitBridge {
 
     static func getEosToken(model: CLlamaModel) -> CLlamaToken {
         do {
-            return llama_token_eos(model)
+            let vocab = llama_model_get_vocab(model)
+            return llama_vocab_eos(vocab)
         } catch {
             print("🦙 KuzcoBridge Warning: Error getting EOS token: \(error.localizedDescription) 🦙")
             return 2 // Common fallback EOS token ID
@@ -373,7 +387,8 @@ enum LlamaKitBridge {
 
     static func isEndOfGenerationToken(model: CLlamaModel, token: CLlamaToken) -> Bool {
         do {
-            return token == llama_token_eos(model) || llama_token_is_eog(model, token)
+            let vocab = llama_model_get_vocab(model)
+            return token == llama_vocab_eos(vocab) || llama_vocab_is_eog(vocab, token)
         } catch {
             print("🦙 KuzcoBridge Warning: Error checking EOG token: \(error.localizedDescription) 🦙")
             return token == 2 // Fallback check for common EOS token
@@ -490,8 +505,24 @@ enum LlamaKitBridge {
             diagnostics += "  Architecture: \(arch)\n"
         }
         
+        // Check for tokenizer model blob (the actual data, not just metadata)
+        buf = [CChar](repeating: 0, count: 128)
+        let hasTokenizerModel = buf.withUnsafeMutableBufferPointer { ptr in
+            llama_model_meta_val_str(model, "tokenizer.ggml.model", ptr.baseAddress, ptr.count)
+        }
+        diagnostics += "  Tokenizer model blob: \(hasTokenizerModel > 0 ? "present" : "MISSING")\n"
+        
+        // Tokenizer type
+        buf = [CChar](repeating: 0, count: 128)
+        _ = buf.withUnsafeMutableBufferPointer { ptr in
+            llama_model_meta_val_str(model, "tokenizer.ggml.type", ptr.baseAddress, ptr.count)
+        }
+        if buf[0] != 0 {
+            diagnostics += "  Tokenizer type: \(String(cString: buf))\n"
+        }
+        
         // Tokenizer info
-        diagnostics += "  Has tokenizer: \(hasUsableTokenizer(model: model))\n"
+        diagnostics += "  Has usable tokenizer: \(hasUsableTokenizer(model: model))\n"
         diagnostics += "  Vocab size: \(getModelVocabularySize(model: model))\n"
         
         // BOS/EOS preferences
