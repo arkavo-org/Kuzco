@@ -194,37 +194,39 @@ enum LlamaKitBridge {
             throw KuzcoError.tokenizationFailed(details: "Model lacks usable tokenizer. Please use a GGUF with embedded tokenizer.")
         }
         
-        // Special handling for Gemma models which may have tokenizer metadata but broken implementation
-        if let arch = getModelArchitecture(model: model), arch.lowercased().contains("gemma") {
-            print("🦙 KuzcoBridge Warning: Gemma model detected - tokenizer may be incompatible 🦙")
-            
-            // For Gemma, we need to handle the case where metadata says tokenizer exists but it crashes
-            // This is a known issue with some Gemma GGUF files
-            // The safest approach is to fail gracefully
-            throw KuzcoError.tokenizationFailed(details: """
-                Gemma model tokenizer is incompatible. This is a known issue with some Gemma GGUF files.
-                
-                Solutions:
-                1. Use a different Gemma GGUF file (look for ones explicitly marked 'tokenizer included')
-                2. Reconvert from HuggingFace with: python convert-hf-to-gguf.py --model google/gemma-3-270m-it
-                3. Try a different model architecture (Llama, Mistral, etc.)
-                
-                The tokenizer metadata exists but the implementation crashes. This requires a properly converted GGUF.
-                """)
+        // Two-pass tokenization for safety with SentencePiece and other tokenizers
+        // First pass: Get the required token count
+        let requiredCount = text.withCString { cstr in
+            llama_tokenize(model, cstr, Int32(strlen(cstr)), nil, 0, addBos, parseSpecial)
         }
         
-        let maxTokenCount = text.utf8.count + (addBos ? 1 : 0) + 1
-        var tokens = [CLlamaToken](repeating: 0, count: maxTokenCount)
-
-        let count = llama_tokenize(model, text, Int32(text.utf8.count), &tokens, Int32(maxTokenCount), addBos, parseSpecial)
-
-        if count < 0 {
-            // Add more detailed error information
-            let errorDetails = "llama_tokenize returned \(count) for text length \(text.utf8.count), maxTokens: \(maxTokenCount), addBos: \(addBos), parseSpecial: \(parseSpecial)"
-            print("🦙 KuzcoBridge Tokenization Error: \(errorDetails) 🦙")
-            throw KuzcoError.tokenizationFailed(details: errorDetails)
+        // Handle negative return (indicates required size)
+        let tokenCount = requiredCount < 0 ? -requiredCount : requiredCount
+        
+        guard tokenCount > 0 else {
+            print("🦙 KuzcoBridge: Tokenization resulted in 0 tokens for text: '\(text)' 🦙")
+            return []
         }
-        return Array(tokens.prefix(Int(count)))
+        
+        // Second pass: Allocate exact buffer and tokenize
+        var tokens = Array<CLlamaToken>(repeating: 0, count: Int(tokenCount))
+        let actualCount = tokens.withUnsafeMutableBufferPointer { buffer in
+            text.withCString { cstr in
+                llama_tokenize(model, cstr, Int32(strlen(cstr)), buffer.baseAddress, Int32(buffer.count), addBos, parseSpecial)
+            }
+        }
+        
+        if actualCount <= 0 {
+            throw KuzcoError.tokenizationFailed(details: "Tokenization failed: returned \(actualCount) tokens")
+        }
+        
+        // Defensive: trim if actual count differs from required
+        if actualCount != tokenCount {
+            print("🦙 KuzcoBridge Warning: Token count mismatch. Required: \(tokenCount), Actual: \(actualCount) 🦙")
+            return Array(tokens.prefix(Int(actualCount)))
+        }
+        
+        return tokens
     }
 
     static func detokenize(token: CLlamaToken, model: CLlamaModel) -> String {
