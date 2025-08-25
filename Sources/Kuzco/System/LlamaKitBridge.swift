@@ -7,7 +7,6 @@
 
 import Foundation
 import llama
-import KuzcoBridge
 
 typealias CLlamaModel = OpaquePointer
 typealias CLlamaContext = OpaquePointer
@@ -361,29 +360,55 @@ enum LlamaKitBridge {
     // MARK: Model Configuration Queries
     
     static func shouldAddBOSToken(model: CLlamaModel) -> Bool {
-        return kuzco_should_add_bos_token(model) != 0
+        // Get the vocab from the model and check its BOS preference
+        let vocab = llama_model_get_vocab(model)
+        guard vocab != nil else { return false }
+        return llama_vocab_get_add_bos(vocab)
     }
     
     static func shouldAddEOSToken(model: CLlamaModel) -> Bool {
-        return kuzco_should_add_eos_token(model) != 0
+        // Get the vocab from the model and check its EOS preference
+        let vocab = llama_model_get_vocab(model)
+        guard vocab != nil else { return false }
+        return llama_vocab_get_add_eos(vocab)
     }
     
     static func modelHasTokenizer(model: CLlamaModel) -> Bool {
-        return kuzco_model_has_tokenizer(model) != 0
+        // Check if model has valid vocabulary
+        if llama_n_vocab(model) <= 0 { return false }
+        
+        // Try to read a tokenizer metadata key
+        var buf = [CChar](repeating: 0, count: 64)
+        let got = buf.withUnsafeMutableBufferPointer { ptr in
+            llama_model_meta_val_str(model, "tokenizer.ggml.type", ptr.baseAddress, Int32(ptr.count))
+        }
+        
+        // If we have vocab size but no tokenizer metadata, it might still work
+        // Return true if we found metadata OR if vocab is reasonably sized
+        return got > 0 || llama_n_vocab(model) > 100
     }
     
     static func getModelArchitecture(model: CLlamaModel) -> String? {
-        let bufferSize = 256
-        let buffer = UnsafeMutablePointer<CChar>.allocate(capacity: bufferSize)
-        defer { buffer.deallocate() }
-        
-        let bytesWritten = kuzco_get_model_architecture(model, buffer, bufferSize)
-        guard bytesWritten > 0 else { return nil }
-        
-        return String(cString: buffer)
+        var buf = [CChar](repeating: 0, count: 64)
+        let got = buf.withUnsafeMutableBufferPointer { ptr in
+            llama_model_meta_val_str(model, "general.architecture", ptr.baseAddress, Int32(ptr.count))
+        }
+        return (got > 0) ? String(cString: buf) : nil
     }
     
     static func supportsSpecialTokens(model: CLlamaModel) -> Bool {
-        return kuzco_supports_special_tokens(model) != 0
+        // Check if model architecture is Gemma (which doesn't use special tokens the same way)
+        if let arch = getModelArchitecture(model: model), arch.lowercased().contains("gemma") {
+            return false
+        }
+        
+        // Check if model has special tokens defined
+        var buf = [CChar](repeating: 0, count: 64)
+        let got = buf.withUnsafeMutableBufferPointer { ptr in
+            llama_model_meta_val_str(model, "tokenizer.ggml.add_bos_token", ptr.baseAddress, Int32(ptr.count))
+        }
+        
+        // Default to supporting special tokens if not explicitly disabled
+        return got <= 0 || String(cString: buf) != "false"
     }
 }
