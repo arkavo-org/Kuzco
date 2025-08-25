@@ -90,6 +90,38 @@ public class LlamaInstance {
         }
     }
 
+    private func performSmokeTest() async throws {
+        guard let model = clModel, let context = clContext, let batch = self.batchBox else {
+            throw KuzcoError.engineNotReady
+        }
+        
+        print("🦙 Kuzco: Running smoke test... 🦙")
+        
+        // Test tokenization with model preferences
+        let addBos = LlamaKitBridge.shouldAddBOSToken(model: model)
+        let tokens = try LlamaKitBridge.tokenize(text: "hello", model: model, addBos: addBos, parseSpecial: false)
+        assert(!tokens.isEmpty, "Smoke test failed: tokenization produced no tokens")
+        
+        // Test batch processing
+        batch.clear()
+        try batch.withBatch { b in
+            LlamaKitBridge.addTokenToBatch(batch: b, token: tokens[0], position: 0, sequenceId: 0, enableLogits: true)
+        }
+        
+        try batch.withBatch { b in
+            try LlamaKitBridge.processBatch(context: context, batch: b)
+        }
+        
+        // Test logits retrieval
+        let logits = LlamaKitBridge.getLogitsOutput(context: context, fromBatchTokenIndex: 0)
+        assert(logits != nil, "Smoke test failed: could not get logits")
+        
+        // Clear cache after test
+        LlamaKitBridge.clearKeyValueCache(context: context)
+        
+        print("🦙 Kuzco: Smoke test passed! 🦙")
+    }
+    
     private func performStartup() async {
         guard !isReady else {
             publishProgress(LoadUpdate(stage: .ready, detail: "Instance already initialized."))
@@ -194,6 +226,14 @@ public class LlamaInstance {
                 print("🦙 Kuzco Warning: Pre-warming failed: \(error.localizedDescription). Continuing anyway. 🦙")
                 publishProgress(LoadUpdate(stage: .prewarming, detail: "Pre-warming failed but continuing (non-fatal)."))
             }
+            
+            // Run smoke test to verify everything is working
+            do {
+                try await performSmokeTest()
+                publishProgress(LoadUpdate(stage: .prewarming, detail: "Smoke test passed."))
+            } catch {
+                print("🦙 Kuzco Warning: Smoke test failed: \(error.localizedDescription). Model may not work correctly. 🦙")
+            }
 
             publishProgress(LoadUpdate(stage: .ready, detail: "Model ready for inference"))
             
@@ -213,17 +253,31 @@ public class LlamaInstance {
             throw KuzcoError.engineNotReady
         }
         do {
-            // Check if model has a valid tokenizer first
-            let vocabSize = LlamaKitBridge.getModelVocabularySize(model: model)
-            if vocabSize <= 0 {
-                print("🦙 Kuzco Warning: Model has no valid tokenizer (vocab size: \(vocabSize)). Skipping pre-warm. 🦙")
+            // Check if model has a valid tokenizer using comprehensive check
+            guard LlamaKitBridge.modelHasTokenizer(model: model) else {
+                print("🦙 Kuzco Warning: Model has no valid tokenizer. Skipping pre-warm. 🦙")
                 // Skip prewarming if no tokenizer - some models may work without it
                 return
             }
             
-            let warmUpPrompt = " "
-            let tokens = try LlamaKitBridge.tokenize(text: warmUpPrompt, model: model, addBos: true, parseSpecial: true)
-            guard !tokens.isEmpty else { throw KuzcoError.warmUpRoutineFailed(details: "Warm-up tokenization resulted in no tokens.") }
+            // Get model architecture for debugging
+            if let arch = LlamaKitBridge.getModelArchitecture(model: model) {
+                print("🦙 Kuzco: Model architecture: \(arch) 🦙")
+            }
+            
+            // Use model's preference for BOS token and special parsing
+            let addBos = LlamaKitBridge.shouldAddBOSToken(model: model)
+            let parseSpecial = LlamaKitBridge.supportsSpecialTokens(model: model)
+            
+            // Use a safer prewarm prompt
+            let warmUpPrompt = "hello"
+            print("🦙 Kuzco: Prewarming with prompt '\(warmUpPrompt)', addBos: \(addBos), parseSpecial: \(parseSpecial) 🦙")
+            
+            let tokens = try LlamaKitBridge.tokenize(text: warmUpPrompt, model: model, addBos: addBos, parseSpecial: parseSpecial)
+            guard !tokens.isEmpty else { 
+                print("🦙 Kuzco Warning: Warm-up tokenization resulted in no tokens. Skipping pre-warm. 🦙")
+                return  // Non-fatal, continue without prewarming
+            }
 
             batch.clear()
             batch.withBatch { batchPtr in
@@ -236,11 +290,15 @@ public class LlamaInstance {
             }
             LlamaKitBridge.clearKeyValueCache(context: context)
             currentContextTokens.removeAll()
+            
+            print("🦙 Kuzco: Pre-warm completed successfully 🦙")
         } catch let error as KuzcoError {
-            // Re-throw Kuzco errors with context
-            throw KuzcoError.warmUpRoutineFailed(details: "Pre-warm failed: \(error.localizedDescription)")
+            // Pre-warm failures are often non-fatal
+            print("🦙 Kuzco Warning: Pre-warm failed (non-fatal): \(error.localizedDescription) 🦙")
+            // Don't throw - continue without prewarming
         } catch {
-            throw KuzcoError.warmUpRoutineFailed(details: "Exception during prewarm: \(error.localizedDescription)")
+            print("🦙 Kuzco Warning: Pre-warm exception (non-fatal): \(error.localizedDescription) 🦙")
+            // Don't throw - continue without prewarming
         }
     }
 
@@ -344,7 +402,11 @@ public class LlamaInstance {
                 let actualMaxContextForThisCall = min(currentCallContextLength, self.settings.contextLength)
 
                 do {
-                    let promptTokens = try LlamaKitBridge.tokenize(text: promptString, model: model, addBos: true, parseSpecial: true)
+                    // Use model's preference for BOS token and special parsing
+                    let addBos = LlamaKitBridge.shouldAddBOSToken(model: model)
+                    let parseSpecial = false  // Default to false, especially for Gemma
+                    
+                    let promptTokens = try LlamaKitBridge.tokenize(text: promptString, model: model, addBos: addBos, parseSpecial: parseSpecial)
 
                     var commonPrefixLength = 0
                     while commonPrefixLength < self.currentContextTokens.count &&

@@ -28,6 +28,11 @@ let package = Package(
             dependencies: [
                 "llama"
             ],
+            publicHeadersPath: "System/include",
+            cSettings: [
+                .headerSearchPath("../../Vendors/llama.xcframework/macos-arm64_x86_64/Headers"),
+                .headerSearchPath("../../Vendors/llama.xcframework/ios-arm64/Headers")
+            ],
             linkerSettings: [
                 .linkedLibrary("c++")
             ]),
