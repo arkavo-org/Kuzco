@@ -347,7 +347,13 @@ enum LlamaKitBridge {
         let bufferSize = 128
         var buffer = [CChar](repeating: 0, count: bufferSize)
 
-        let nChars = llama_token_to_piece(model, token, &buffer, Int32(bufferSize), 0, false)
+        // Get vocab pointer from model first
+        guard let vocab = llama_model_get_vocab(model) else {
+            print("🦙 KuzcoBridge Error: Failed to get vocab for detokenization 🦙")
+            return "<vocab_error>"
+        }
+
+        let nChars = llama_token_to_piece(vocab, token, &buffer, Int32(bufferSize), 0, false)
 
         if nChars <= 0 {
             if nChars < 0 && -Int(nChars) > bufferSize {

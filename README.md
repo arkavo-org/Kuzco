@@ -1,5 +1,11 @@
 # Kuzco 🦙
 
+> **🔧 Arkavo Fork Fixes**: This fork resolves critical function signature mismatches between Swift and the llama.cpp C API that caused crashes with Gemma and other models. Key fixes:
+> - ✅ **Fixed tokenization crashes**: Corrected `llama_tokenize` to use vocab pointer instead of model pointer
+> - ✅ **Fixed detokenization crashes**: Corrected `llama_token_to_piece` to use vocab pointer instead of model pointer  
+> - ✅ **Enhanced Gemma-3 support**: Updated XCFramework with proper C++ visibility settings and Gemma-3 architecture support
+> - ✅ **Comprehensive debugging**: Added extensive logging for troubleshooting Swift-C interop issues
+
 [![Swift Package Manager](https://img.shields.io/badge/Swift%20Package%20Manager-compatible-brightgreen.svg)](https://swift.org/package-manager/)
 [![Platform](https://img.shields.io/badge/platform-iOS%2015%2B%20|%20macOS%2012%2B%20|%20Mac%20Catalyst%2015%2B-blue.svg)](https://swift.org)
 [![Swift](https://img.shields.io/badge/Swift-5.9+-orange.svg)](https://swift.org)
