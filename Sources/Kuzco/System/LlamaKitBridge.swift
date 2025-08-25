@@ -194,6 +194,27 @@ enum LlamaKitBridge {
             throw KuzcoError.tokenizationFailed(details: "Model vocabulary size is \(vocabSize) - model may not have a valid tokenizer")
         }
         
+        // Check if this is a Gemma model and handle specially
+        if let arch = getModelArchitecture(model: model), arch.lowercased().contains("gemma") {
+            print("🦙 KuzcoBridge Warning: Gemma model detected. Tokenizer may not be fully compatible. 🦙")
+            // For Gemma models, try with specific settings
+            // Gemma models typically don't add BOS automatically
+            let gemmaAddBos = false
+            let gemmaParseSpecial = false
+            
+            let maxTokenCount = text.utf8.count * 2 + 10 // More buffer for Gemma
+            var tokens = [CLlamaToken](repeating: 0, count: maxTokenCount)
+            
+            let count = llama_tokenize(model, text, Int32(text.utf8.count), &tokens, Int32(maxTokenCount), gemmaAddBos, gemmaParseSpecial)
+            
+            if count < 0 {
+                print("🦙 KuzcoBridge Error: Gemma tokenization failed. This model may require a different llama.cpp build. 🦙")
+                throw KuzcoError.tokenizationFailed(details: "Gemma tokenization failed with code \(count). The model may be incompatible with the current llama.cpp version.")
+            }
+            
+            return Array(tokens.prefix(Int(count)))
+        }
+        
         let maxTokenCount = text.utf8.count + (addBos ? 1 : 0) + 1
         var tokens = [CLlamaToken](repeating: 0, count: maxTokenCount)
 

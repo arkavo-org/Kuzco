@@ -261,8 +261,16 @@ public class LlamaInstance {
             }
             
             // Get model architecture for debugging
+            var modelArch: String? = nil
             if let arch = LlamaKitBridge.getModelArchitecture(model: model) {
+                modelArch = arch
                 print("🦙 Kuzco: Model architecture: \(arch) 🦙")
+            }
+            
+            // Skip prewarming for Gemma-3 models due to tokenizer initialization issues
+            if let arch = modelArch, arch.lowercased().contains("gemma") {
+                print("🦙 Kuzco Warning: Skipping pre-warm for Gemma model due to tokenizer compatibility issues 🦙")
+                return
             }
             
             // Use model's preference for BOS token and special parsing
