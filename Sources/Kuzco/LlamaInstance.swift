@@ -178,7 +178,7 @@ public class LlamaInstance {
 
             // Create batch with error handling
             do {
-                self.batchBox = LlamaBatchBox(maxTokens: self.settings.processingBatchSize)
+                self.batchBox = LlamaBatchBox(maxTokens: Int32(self.settings.processingBatchSize))
                 publishProgress(LoadUpdate(stage: .creatingContext, detail: "Token batch created."))
             } catch let error {
                 throw KuzcoError.batchCreationFailed
