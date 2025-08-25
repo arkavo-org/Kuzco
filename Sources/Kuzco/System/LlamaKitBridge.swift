@@ -104,6 +104,43 @@ enum LlamaKitBridge {
             let diagnostics = getModelDiagnostics(model: modelPtr)
             print(diagnostics)
             
+            // Extra validation for Gemma models
+            if let arch = getModelArchitecture(model: modelPtr), 
+               arch.lowercased().contains("gemma") {
+                print("🦙 Kuzco: Gemma model detected, performing extra validation... 🦙")
+                
+                // Get the vocab object
+                guard let vocab = llama_model_get_vocab(modelPtr) else {
+                    print("🦙 Kuzco ERROR: Failed to get vocab object for Gemma model! 🦙")
+                    throw KuzcoError.modelInitializationFailed(details: "Gemma model loaded but vocab object is null")
+                }
+                
+                // Check vocab type
+                let vocabType = llama_vocab_type(vocab)
+                print("🦙 Kuzco: Vocab type raw value: \(vocabType.rawValue) 🦙")
+                
+                // Get token count
+                let tokenCount = llama_vocab_n_tokens(vocab)
+                print("🦙 Kuzco: Token count: \(tokenCount) 🦙")
+                
+                // Try to get a specific token to verify vocab is working
+                let bosToken = llama_vocab_bos(vocab)
+                let eosToken = llama_vocab_eos(vocab)
+                print("🦙 Kuzco: BOS token: \(bosToken), EOS token: \(eosToken) 🦙")
+                
+                // Test tokenization directly here to catch the issue early
+                print("🦙 Kuzco: Testing direct tokenization... 🦙")
+                let testText = "test"
+                let result = testText.withCString { cstr in
+                    llama_tokenize(modelPtr, cstr, Int32(strlen(cstr)), nil, 0, false, false)
+                }
+                print("🦙 Kuzco: Direct tokenization test result: \(result) 🦙")
+                
+                if result < 0 {
+                    print("🦙 Kuzco WARNING: Tokenization test indicates potential issue (negative result) 🦙")
+                }
+            }
+            
             return modelPtr
             
         } catch let error as KuzcoError {
