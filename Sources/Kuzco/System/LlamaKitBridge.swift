@@ -380,7 +380,7 @@ enum LlamaKitBridge {
         // Try to read a tokenizer metadata key
         var buf = [CChar](repeating: 0, count: 64)
         let got = buf.withUnsafeMutableBufferPointer { ptr in
-            llama_model_meta_val_str(model, "tokenizer.ggml.type", ptr.baseAddress, Int32(ptr.count))
+            llama_model_meta_val_str(model, "tokenizer.ggml.type", ptr.baseAddress, ptr.count)
         }
         
         // If we have vocab size but no tokenizer metadata, it might still work
@@ -391,7 +391,7 @@ enum LlamaKitBridge {
     static func getModelArchitecture(model: CLlamaModel) -> String? {
         var buf = [CChar](repeating: 0, count: 64)
         let got = buf.withUnsafeMutableBufferPointer { ptr in
-            llama_model_meta_val_str(model, "general.architecture", ptr.baseAddress, Int32(ptr.count))
+            llama_model_meta_val_str(model, "general.architecture", ptr.baseAddress, ptr.count)
         }
         return (got > 0) ? String(cString: buf) : nil
     }
@@ -405,7 +405,7 @@ enum LlamaKitBridge {
         // Check if model has special tokens defined
         var buf = [CChar](repeating: 0, count: 64)
         let got = buf.withUnsafeMutableBufferPointer { ptr in
-            llama_model_meta_val_str(model, "tokenizer.ggml.add_bos_token", ptr.baseAddress, Int32(ptr.count))
+            llama_model_meta_val_str(model, "tokenizer.ggml.add_bos_token", ptr.baseAddress, ptr.count)
         }
         
         // Default to supporting special tokens if not explicitly disabled
