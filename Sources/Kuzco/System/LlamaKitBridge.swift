@@ -75,6 +75,14 @@ enum LlamaKitBridge {
             print("🦙 Kuzco - Attempting to load model from: \(path) 🦙")
             print("🦙 GPU layers: \(settings.offloadedGpuLayers), mmap: \(settings.enableMemoryMapping), mlock: \(settings.enableMemoryLocking) 🦙")
             
+            // Set up logging callback to capture llama.cpp internal logs
+            llama_log_set({ (level, text, userData) in
+                if let textStr = text {
+                    let logStr = String(cString: textStr)
+                    print("🦙 [llama.cpp] \(logStr)", terminator: "")
+                }
+            }, nil)
+            
             // Log llama.cpp library version info for debugging integration issues
             print("🦙 llama.cpp library loaded - checking version... 🦙")
             
