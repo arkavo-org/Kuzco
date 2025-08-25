@@ -7,22 +7,7 @@
 
 import Foundation
 import llama
-
-// Import our C bridge functions
-@_silgen_name("kuzco_should_add_bos_token")
-func kuzco_should_add_bos_token(_ model: OpaquePointer?) -> Int32
-
-@_silgen_name("kuzco_should_add_eos_token")
-func kuzco_should_add_eos_token(_ model: OpaquePointer?) -> Int32
-
-@_silgen_name("kuzco_model_has_tokenizer")
-func kuzco_model_has_tokenizer(_ model: OpaquePointer?) -> Int32
-
-@_silgen_name("kuzco_get_model_architecture")
-func kuzco_get_model_architecture(_ model: OpaquePointer?, _ buf: UnsafeMutablePointer<CChar>?, _ bufSize: Int) -> Int32
-
-@_silgen_name("kuzco_supports_special_tokens")
-func kuzco_supports_special_tokens(_ model: OpaquePointer?) -> Int32
+import KuzcoBridge
 
 typealias CLlamaModel = OpaquePointer
 typealias CLlamaContext = OpaquePointer

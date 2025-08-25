@@ -1,0 +1,4 @@
+module KuzcoBridge {
+    header "KuzcoBridge.h"
+    export *
+}

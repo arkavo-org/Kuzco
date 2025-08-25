@@ -24,15 +24,22 @@ let package = Package(
             path: "Vendors/llama.xcframework"
         ),
         .target(
-            name: "Kuzco",
-            dependencies: [
-                "llama"
-            ],
-            publicHeadersPath: "System/include",
+            name: "KuzcoBridge",
+            dependencies: ["llama"],
+            path: "Sources/KuzcoBridge",
+            publicHeadersPath: "include",
             cSettings: [
                 .headerSearchPath("../../Vendors/llama.xcframework/macos-arm64_x86_64/Headers"),
                 .headerSearchPath("../../Vendors/llama.xcframework/ios-arm64/Headers")
+            ]
+        ),
+        .target(
+            name: "Kuzco",
+            dependencies: [
+                "llama",
+                "KuzcoBridge"
             ],
+            path: "Sources/Kuzco",
             linkerSettings: [
                 .linkedLibrary("c++")
             ]),
