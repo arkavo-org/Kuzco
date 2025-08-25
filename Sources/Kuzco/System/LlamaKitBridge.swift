@@ -181,7 +181,9 @@ enum LlamaKitBridge {
     }
 
     static func getModelVocabularySize(model: CLlamaModel) -> Int32 {
-        return llama_n_vocab(model)
+        // Get vocab from model first, then get token count
+        guard let vocab = llama_model_get_vocab(model) else { return 0 }
+        return llama_vocab_n_tokens(vocab)
     }
 
     static func tokenize(text: String, model: CLlamaModel, addBos: Bool, parseSpecial: Bool) throws -> [CLlamaToken] {
@@ -374,8 +376,9 @@ enum LlamaKitBridge {
     }
     
     static func modelHasTokenizer(model: CLlamaModel) -> Bool {
-        // Check if model has valid vocabulary
-        if llama_n_vocab(model) <= 0 { return false }
+        // Check if model has valid vocabulary using the model-specific function
+        let vocabSize = getModelVocabularySize(model: model)
+        if vocabSize <= 0 { return false }
         
         // Try to read a tokenizer metadata key
         var buf = [CChar](repeating: 0, count: 64)
@@ -385,7 +388,7 @@ enum LlamaKitBridge {
         
         // If we have vocab size but no tokenizer metadata, it might still work
         // Return true if we found metadata OR if vocab is reasonably sized
-        return got > 0 || llama_n_vocab(model) > 100
+        return got > 0 || vocabSize > 100
     }
     
     static func getModelArchitecture(model: CLlamaModel) -> String? {
