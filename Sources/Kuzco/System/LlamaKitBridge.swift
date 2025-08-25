@@ -142,8 +142,16 @@ enum LlamaKitBridge {
                 let testText = "test"
                 
                 // First pass with nil buffer to get count
+                print("🦙 DEBUG: About to call llama_tokenize from Swift side 🦙")
+                print("🦙 DEBUG: modelPtr = \(modelPtr) 🦙")  
+                print("🦙 DEBUG: text = '\(testText)', length = \(testText.count) 🦙")
+                print("🦙 DEBUG: Calling llama_tokenize with nil buffer NOW... 🦙")
                 let requiredCount = testText.withCString { cstr in
-                    llama_tokenize(modelPtr, cstr, Int32(strlen(cstr)), nil, 0, false, false)
+                    print("🦙 DEBUG: Inside withCString closure, cstr = \(cstr) 🦙")
+                    print("🦙 DEBUG: About to make actual C call to llama_tokenize... 🦙")
+                    let result = llama_tokenize(modelPtr, cstr, Int32(strlen(cstr)), nil, 0, false, false)
+                    print("🦙 DEBUG: llama_tokenize returned: \(result) 🦙")
+                    return result
                 }
                 
                 if requiredCount > 0 || requiredCount < 0 {
@@ -287,8 +295,14 @@ enum LlamaKitBridge {
         
         // First pass: Get the required token count
         print("🦙 DEBUG: Calling llama_tokenize with nil buffer... 🦙")
+        print("🦙 DEBUG: model = \(model), text length = \(text.count) 🦙")
+        print("🦙 DEBUG: addBos = \(addBos), parseSpecial = \(parseSpecial) 🦙")
         let requiredCount = text.withCString { cstr in
-            llama_tokenize(model, cstr, Int32(strlen(cstr)), nil, 0, addBos, parseSpecial)
+            print("🦙 DEBUG: In withCString, about to call llama_tokenize 🦙")
+            print("🦙 DEBUG: cstr = \(cstr), strlen = \(strlen(cstr)) 🦙")
+            let result = llama_tokenize(model, cstr, Int32(strlen(cstr)), nil, 0, addBos, parseSpecial)
+            print("🦙 DEBUG: llama_tokenize call completed, result = \(result) 🦙")
+            return result
         }
         print("🦙 DEBUG: First pass returned: \(requiredCount) 🦙")
         
