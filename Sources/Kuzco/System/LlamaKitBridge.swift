@@ -265,7 +265,10 @@ enum LlamaKitBridge {
         print("🦙 Tokenizing text of length \(text.count), addBos=\(addBos), parseSpecial=\(parseSpecial) 🦙")
         
         // WORKAROUND: Check if this is a Gemma model
-        let isGemma = getModelArchitecture(model: model)?.lowercased().contains("gemma") ?? false
+        let modelArch = getModelArchitecture(model: model)
+        print("🦙 DEBUG: Model architecture detected: \(modelArch ?? "nil") 🦙")
+        let isGemma = modelArch?.lowercased().contains("gemma") ?? false
+        print("🦙 DEBUG: Is Gemma model: \(isGemma) 🦙")
         
         if isGemma {
             // WORKAROUND: For Gemma, use single-pass with generous buffer
@@ -308,10 +311,21 @@ enum LlamaKitBridge {
         }
         
         // Standard two-pass tokenization for non-Gemma models
+        print("🦙 DEBUG: About to call two-pass tokenization 🦙")
+        print("🦙 DEBUG: Model pointer: \(model) 🦙")
+        print("🦙 DEBUG: Text length: \(text.count) 🦙")
+        print("🦙 DEBUG: addBos=\(addBos), parseSpecial=\(parseSpecial) 🦙")
+        
+        // Check model validity right before tokenization
+        let vocabSize = getModelVocabularySize(model: model)
+        print("🦙 DEBUG: Vocab size right before tokenize: \(vocabSize) 🦙")
+        
         // First pass: Get the required token count
+        print("🦙 DEBUG: Calling llama_tokenize with nil buffer... 🦙")
         let requiredCount = text.withCString { cstr in
             llama_tokenize(model, cstr, Int32(strlen(cstr)), nil, 0, addBos, parseSpecial)
         }
+        print("🦙 DEBUG: First pass returned: \(requiredCount) 🦙")
         
         // Handle negative return (indicates required size)
         let tokenCount = requiredCount < 0 ? -requiredCount : requiredCount
