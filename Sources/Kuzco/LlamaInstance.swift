@@ -544,10 +544,18 @@ public class LlamaInstance {
                                                 generatedStringAccumulator.endIndex : stopRangeInAccumulator.lowerBound
                                             let distanceIntoPiece = (generatedStringAccumulator + piece).distance(from: pieceContributionStartIndex, to: stopRangeInAccumulator.lowerBound)
                                             if distanceIntoPiece < 0 {
-                                                let charsInPieceToCut = piece.distance(from: piece.startIndex, to: piece.index(piece.startIndex, offsetBy: -distanceIntoPiece))
-                                                if charsInPieceToCut < piece.count {
-                                                    pieceToYield = String(piece.prefix(upTo: piece.index(piece.startIndex, offsetBy: charsInPieceToCut)))
+                                                let offsetAmount = -distanceIntoPiece
+                                                // Ensure we don't go beyond the piece bounds
+                                                if offsetAmount <= piece.count {
+                                                    let targetIndex = piece.index(piece.startIndex, offsetBy: offsetAmount)
+                                                    let charsInPieceToCut = piece.distance(from: piece.startIndex, to: targetIndex)
+                                                    if charsInPieceToCut < piece.count && charsInPieceToCut >= 0 {
+                                                        pieceToYield = String(piece.prefix(upTo: targetIndex))
+                                                    } else {
+                                                        pieceToYield = ""
+                                                    }
                                                 } else {
+                                                    // Offset would go beyond piece bounds, yield empty
                                                     pieceToYield = ""
                                                 }
                                             }
