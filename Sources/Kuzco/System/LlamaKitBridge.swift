@@ -143,13 +143,13 @@ enum LlamaKitBridge {
                 
                 // First pass with nil buffer to get count
                 print("🦙 DEBUG: About to call llama_tokenize from Swift side 🦙")
-                print("🦙 DEBUG: modelPtr = \(modelPtr) 🦙")  
+                print("🦙 DEBUG: modelPtr = \(modelPtr), vocab = \(vocab) 🦙")  
                 print("🦙 DEBUG: text = '\(testText)', length = \(testText.count) 🦙")
                 print("🦙 DEBUG: Calling llama_tokenize with nil buffer NOW... 🦙")
                 let requiredCount = testText.withCString { cstr in
                     print("🦙 DEBUG: Inside withCString closure, cstr = \(cstr) 🦙")
                     print("🦙 DEBUG: About to make actual C call to llama_tokenize... 🦙")
-                    let result = llama_tokenize(modelPtr, cstr, Int32(strlen(cstr)), nil, 0, false, false)
+                    let result = llama_tokenize(vocab, cstr, Int32(strlen(cstr)), nil, 0, false, false)
                     print("🦙 DEBUG: llama_tokenize returned: \(result) 🦙")
                     return result
                 }
@@ -162,7 +162,7 @@ enum LlamaKitBridge {
                     var testTokens = Array<CLlamaToken>(repeating: 0, count: Int(neededTokens))
                     let actualCount = testTokens.withUnsafeMutableBufferPointer { buffer in
                         testText.withCString { cstr in
-                            llama_tokenize(modelPtr, cstr, Int32(strlen(cstr)), buffer.baseAddress, Int32(buffer.count), false, false)
+                            llama_tokenize(vocab, cstr, Int32(strlen(cstr)), buffer.baseAddress, Int32(buffer.count), false, false)
                         }
                     }
                     
@@ -297,10 +297,18 @@ enum LlamaKitBridge {
         print("🦙 DEBUG: Calling llama_tokenize with nil buffer... 🦙")
         print("🦙 DEBUG: model = \(model), text length = \(text.count) 🦙")
         print("🦙 DEBUG: addBos = \(addBos), parseSpecial = \(parseSpecial) 🦙")
+        
+        // Get vocab from model first
+        guard let vocab = llama_model_get_vocab(model) else {
+            print("🦙 DEBUG: Failed to get vocab from model 🦙")
+            throw KuzcoError.tokenizationFailed(details: "Failed to get vocab from model")
+        }
+        print("🦙 DEBUG: Got vocab pointer: \(vocab) 🦙")
+        
         let requiredCount = text.withCString { cstr in
             print("🦙 DEBUG: In withCString, about to call llama_tokenize 🦙")
-            print("🦙 DEBUG: cstr = \(cstr), strlen = \(strlen(cstr)) 🦙")
-            let result = llama_tokenize(model, cstr, Int32(strlen(cstr)), nil, 0, addBos, parseSpecial)
+            print("🦙 DEBUG: vocab = \(vocab), cstr = \(cstr), strlen = \(strlen(cstr)) 🦙")
+            let result = llama_tokenize(vocab, cstr, Int32(strlen(cstr)), nil, 0, addBos, parseSpecial)
             print("🦙 DEBUG: llama_tokenize call completed, result = \(result) 🦙")
             return result
         }
@@ -318,7 +326,7 @@ enum LlamaKitBridge {
         var tokens = Array<CLlamaToken>(repeating: 0, count: Int(tokenCount))
         let actualCount = tokens.withUnsafeMutableBufferPointer { buffer in
             text.withCString { cstr in
-                llama_tokenize(model, cstr, Int32(strlen(cstr)), buffer.baseAddress, Int32(buffer.count), addBos, parseSpecial)
+                llama_tokenize(vocab, cstr, Int32(strlen(cstr)), buffer.baseAddress, Int32(buffer.count), addBos, parseSpecial)
             }
         }
         
