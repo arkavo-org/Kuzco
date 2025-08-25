@@ -480,19 +480,27 @@ enum LlamaKitBridge {
     
     /// Check if model has a usable tokenizer (not just vocab, but actual tokenizer implementation)
     static func hasUsableTokenizer(model: CLlamaModel) -> Bool {
+        print("🦙 DEBUG: hasUsableTokenizer START - Model pointer: \(model) 🦙")
+        
+        print("🦙 DEBUG: About to call llama_model_get_vocab... 🦙")
         guard let vocab = llama_model_get_vocab(model) else { 
             print("🦙 KuzcoBridge: No vocab found in model 🦙")
             return false 
         }
+        print("🦙 DEBUG: llama_model_get_vocab returned vocab pointer: \(vocab) 🦙")
         
+        print("🦙 DEBUG: About to call llama_vocab_n_tokens with vocab: \(vocab) 🦙")
         let tokenCount = llama_vocab_n_tokens(vocab)
+        print("🦙 DEBUG: llama_vocab_n_tokens returned: \(tokenCount) 🦙")
         if tokenCount <= 0 { 
             print("🦙 KuzcoBridge: Vocab has no tokens (count: \(tokenCount)) 🦙")
             return false 
         }
         
         // Check vocab type - NONE means no tokenizer
+        print("🦙 DEBUG: About to call llama_vocab_type with vocab: \(vocab) 🦙")
         let vocabType = llama_vocab_type(vocab)
+        print("🦙 DEBUG: llama_vocab_type returned: \(vocabType.rawValue) 🦙")
         if vocabType == llama_vocab_type(rawValue: 0) { // LLAMA_VOCAB_TYPE_NONE
             print("🦙 KuzcoBridge: Vocab type is NONE - no tokenizer implementation 🦙")
             return false
@@ -510,6 +518,7 @@ enum LlamaKitBridge {
         default: typeStr = "Unknown(\(vocabType.rawValue))"
         }
         print("🦙 KuzcoBridge: Tokenizer type: \(typeStr), token count: \(tokenCount) 🦙")
+        print("🦙 DEBUG: hasUsableTokenizer END - returning true 🦙")
         
         return true
     }
