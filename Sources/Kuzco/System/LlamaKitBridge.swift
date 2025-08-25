@@ -16,7 +16,9 @@ typealias CLlamaBatch = llama_batch
 
 enum LlamaKitBridge {
     static func initializeLlamaBackend() {
+        // Initialize the backend - this is critical for proper C++ initialization
         llama_backend_init()
+        print("🦙 Kuzco: llama_backend_init called 🦙")
     }
 
     static func releaseLlamaBackend() {
@@ -131,32 +133,33 @@ enum LlamaKitBridge {
                 // Test tokenization directly here to catch the issue early
                 print("🦙 Kuzco: Testing direct tokenization... 🦙")
                 
-                // First test: Get required token count (this is what was crashing)
+                // WORKAROUND: Skip tokenization test for Gemma models
+                // The tokenizer crashes when called with nil buffer (two-pass pattern)
+                // But might work with a pre-allocated buffer
+                print("🦙 Kuzco WARNING: Skipping tokenization test for Gemma 🦙")
+                print("🦙 Kuzco: Known issue - tokenizer crashes with nil buffer 🦙")
+                print("🦙 Kuzco: Will attempt single-pass tokenization with pre-allocated buffer 🦙")
+                
+                // Try single-pass with generous buffer instead
                 let testText = "test"
-                print("🦙 Kuzco: Step 1 - Getting required token count... 🦙")
-                let requiredCount = testText.withCString { cstr in
-                    // Pass nil for tokens to get count - THIS IS WHERE IT CRASHES
-                    llama_tokenize(modelPtr, cstr, Int32(strlen(cstr)), nil, 0, false, false)
+                var tokens = [llama_token](repeating: 0, count: 100)
+                print("🦙 Kuzco: Attempting single-pass tokenization with buffer... 🦙")
+                
+                let result = tokens.withUnsafeMutableBufferPointer { buffer in
+                    testText.withCString { cstr in
+                        llama_tokenize(modelPtr, cstr, Int32(strlen(cstr)), buffer.baseAddress, Int32(buffer.count), false, false)
+                    }
                 }
                 
-                if requiredCount != 0 {
-                    print("🦙 Kuzco: Required token count: \(requiredCount) 🦙")
-                    
-                    // Only try actual tokenization if we got a valid count
-                    if requiredCount > 0 {
-                        print("🦙 Kuzco: Step 2 - Performing actual tokenization... 🦙")
-                        var tokens = [llama_token](repeating: 0, count: Int(requiredCount))
-                        let actualCount = tokens.withUnsafeMutableBufferPointer { buffer in
-                            testText.withCString { cstr in
-                                llama_tokenize(modelPtr, cstr, Int32(strlen(cstr)), buffer.baseAddress, Int32(buffer.count), false, false)
-                            }
-                        }
-                        print("🦙 Kuzco: Actual tokenization returned \(actualCount) tokens 🦙")
-                    }
+                if result > 0 {
+                    print("🦙 Kuzco SUCCESS: Single-pass tokenization worked! Got \(result) tokens 🦙")
+                    print("🦙 Kuzco: Gemma model CAN tokenize with pre-allocated buffer 🦙")
+                } else if result < 0 {
+                    print("🦙 Kuzco INFO: Tokenization returned \(result) - buffer too small, need \(-result) tokens 🦙")
+                    // This is actually OK - it means tokenization works but needs bigger buffer
                 } else {
-                    print("🦙 Kuzco ERROR: Getting token count failed (returned 0) 🦙")
-                    print("🦙 Kuzco: This indicates the tokenizer is not properly initialized 🦙")
-                    throw KuzcoError.modelInitializationFailed(details: "Gemma model tokenizer initialization failed. The model loads but cannot tokenize text.")
+                    print("🦙 Kuzco ERROR: Tokenization returned 0 - complete failure 🦙")
+                    throw KuzcoError.modelInitializationFailed(details: "Gemma tokenizer completely non-functional")
                 }
             }
             
@@ -261,7 +264,50 @@ enum LlamaKitBridge {
         // Log tokenization attempt for debugging
         print("🦙 Tokenizing text of length \(text.count), addBos=\(addBos), parseSpecial=\(parseSpecial) 🦙")
         
-        // Two-pass tokenization for safety with SentencePiece and other tokenizers
+        // WORKAROUND: Check if this is a Gemma model
+        let isGemma = getModelArchitecture(model: model)?.lowercased().contains("gemma") ?? false
+        
+        if isGemma {
+            // WORKAROUND: For Gemma, use single-pass with generous buffer
+            // The two-pass pattern crashes when passing nil buffer
+            print("🦙 Using single-pass tokenization for Gemma model 🦙")
+            
+            // Estimate tokens generously (roughly 1.5 tokens per character for safety)
+            let estimatedTokens = max(100, text.count * 2)
+            var tokens = Array<CLlamaToken>(repeating: 0, count: estimatedTokens)
+            
+            let actualCount = tokens.withUnsafeMutableBufferPointer { buffer in
+                text.withCString { cstr in
+                    llama_tokenize(model, cstr, Int32(strlen(cstr)), buffer.baseAddress, Int32(buffer.count), addBos, parseSpecial)
+                }
+            }
+            
+            if actualCount > 0 {
+                // Success - return only the used tokens
+                return Array(tokens.prefix(Int(actualCount)))
+            } else if actualCount < 0 {
+                // Buffer too small - try again with exact size
+                let neededSize = -actualCount
+                print("🦙 Buffer too small, retrying with size \(neededSize) 🦙")
+                
+                var biggerTokens = Array<CLlamaToken>(repeating: 0, count: Int(neededSize))
+                let retryCount = biggerTokens.withUnsafeMutableBufferPointer { buffer in
+                    text.withCString { cstr in
+                        llama_tokenize(model, cstr, Int32(strlen(cstr)), buffer.baseAddress, Int32(buffer.count), addBos, parseSpecial)
+                    }
+                }
+                
+                if retryCount > 0 {
+                    return Array(biggerTokens.prefix(Int(retryCount)))
+                } else {
+                    throw KuzcoError.tokenizationFailed(details: "Gemma tokenization failed even with correctly sized buffer")
+                }
+            } else {
+                throw KuzcoError.tokenizationFailed(details: "Gemma tokenization returned 0 tokens")
+            }
+        }
+        
+        // Standard two-pass tokenization for non-Gemma models
         // First pass: Get the required token count
         let requiredCount = text.withCString { cstr in
             llama_tokenize(model, cstr, Int32(strlen(cstr)), nil, 0, addBos, parseSpecial)
