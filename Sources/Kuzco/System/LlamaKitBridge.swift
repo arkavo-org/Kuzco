@@ -185,6 +185,13 @@ enum LlamaKitBridge {
     }
 
     static func tokenize(text: String, model: CLlamaModel, addBos: Bool, parseSpecial: Bool) throws -> [CLlamaToken] {
+        // First check if model has valid vocabulary
+        let vocabSize = getModelVocabularySize(model: model)
+        guard vocabSize > 0 else {
+            print("🦙 KuzcoBridge Error: Model has invalid vocabulary size: \(vocabSize). Model may not have a tokenizer. 🦙")
+            throw KuzcoError.tokenizationFailed(details: "Model vocabulary size is \(vocabSize) - model may not have a valid tokenizer")
+        }
+        
         let maxTokenCount = text.utf8.count + (addBos ? 1 : 0) + 1
         var tokens = [CLlamaToken](repeating: 0, count: maxTokenCount)
 

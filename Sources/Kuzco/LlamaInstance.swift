@@ -213,6 +213,14 @@ public class LlamaInstance {
             throw KuzcoError.engineNotReady
         }
         do {
+            // Check if model has a valid tokenizer first
+            let vocabSize = LlamaKitBridge.getModelVocabularySize(model: model)
+            if vocabSize <= 0 {
+                print("🦙 Kuzco Warning: Model has no valid tokenizer (vocab size: \(vocabSize)). Skipping pre-warm. 🦙")
+                // Skip prewarming if no tokenizer - some models may work without it
+                return
+            }
+            
             let warmUpPrompt = " "
             let tokens = try LlamaKitBridge.tokenize(text: warmUpPrompt, model: model, addBos: true, parseSpecial: true)
             guard !tokens.isEmpty else { throw KuzcoError.warmUpRoutineFailed(details: "Warm-up tokenization resulted in no tokens.") }
@@ -228,6 +236,9 @@ public class LlamaInstance {
             }
             LlamaKitBridge.clearKeyValueCache(context: context)
             currentContextTokens.removeAll()
+        } catch let error as KuzcoError {
+            // Re-throw Kuzco errors with context
+            throw KuzcoError.warmUpRoutineFailed(details: "Pre-warm failed: \(error.localizedDescription)")
         } catch {
             throw KuzcoError.warmUpRoutineFailed(details: "Exception during prewarm: \(error.localizedDescription)")
         }
