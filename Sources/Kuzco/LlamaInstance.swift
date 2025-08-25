@@ -207,6 +207,19 @@ public class LlamaInstance {
                 }
             }
             publishProgress(LoadUpdate(stage: .creatingContext, detail: "Context validated."))
+            
+            // Critical check: Ensure model has a usable tokenizer before proceeding
+            if let model = self.clModel {
+                // Log diagnostics for debugging
+                print(LlamaKitBridge.getModelDiagnostics(model: model))
+                
+                guard LlamaKitBridge.hasUsableTokenizer(model: model) else {
+                    let errorMsg = "This model file lacks a tokenizer. Please use a GGUF file that includes embedded tokenizer data, or reconvert the model with tokenizer included."
+                    print("🦙 Kuzco Critical Error: \(errorMsg) 🦙")
+                    publishProgress(LoadUpdate(stage: .failed, detail: errorMsg, hasError: true))
+                    throw KuzcoError.modelInitializationFailed(details: errorMsg)
+                }
+            }
 
             // Create batch with error handling
             do {
@@ -253,24 +266,16 @@ public class LlamaInstance {
             throw KuzcoError.engineNotReady
         }
         do {
-            // Check if model has a valid tokenizer using comprehensive check
-            guard LlamaKitBridge.modelHasTokenizer(model: model) else {
-                print("🦙 Kuzco Warning: Model has no valid tokenizer. Skipping pre-warm. 🦙")
-                // Skip prewarming if no tokenizer - some models may work without it
-                return
+            // Check if model has a usable tokenizer (not just vocab, but actual implementation)
+            guard LlamaKitBridge.hasUsableTokenizer(model: model) else {
+                print("🦙 Kuzco Error: Model lacks a usable tokenizer. Cannot perform pre-warm. 🦙")
+                // This is a critical issue - the model won't be able to process any text
+                throw KuzcoError.warmUpRoutineFailed(details: "Model lacks tokenizer. This GGUF file may be missing tokenizer data. Please use a GGUF with embedded tokenizer.")
             }
             
             // Get model architecture for debugging
-            var modelArch: String? = nil
             if let arch = LlamaKitBridge.getModelArchitecture(model: model) {
-                modelArch = arch
                 print("🦙 Kuzco: Model architecture: \(arch) 🦙")
-            }
-            
-            // Skip prewarming for Gemma-3 models due to tokenizer initialization issues
-            if let arch = modelArch, arch.lowercased().contains("gemma") {
-                print("🦙 Kuzco Warning: Skipping pre-warm for Gemma model due to tokenizer compatibility issues 🦙")
-                return
             }
             
             // Use model's preference for BOS token and special parsing
@@ -404,6 +409,14 @@ public class LlamaInstance {
             Task { @LlamaInstanceActor [] in
                 guard let model = self.clModel, let context = self.clContext, let batch = self.batchBox else {
                     continuation.finish(throwing: KuzcoError.engineNotReady)
+                    return
+                }
+                
+                // Critical check: Ensure tokenizer is available before attempting to process prompt
+                guard LlamaKitBridge.hasUsableTokenizer(model: model) else {
+                    let error = KuzcoError.tokenizationFailed(details: "Model lacks tokenizer. This GGUF file is missing embedded tokenizer data. Please use a different model file.")
+                    print("🦙 Kuzco Error: Cannot process prompt - no tokenizer available 🦙")
+                    continuation.finish(throwing: error)
                     return
                 }
 

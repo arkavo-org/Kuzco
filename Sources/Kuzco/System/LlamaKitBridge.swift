@@ -13,6 +13,7 @@ typealias CLlamaContext = OpaquePointer
 typealias CLlamaToken = llama_token
 typealias CLlamaBatch = llama_batch
 
+
 enum LlamaKitBridge {
     static func initializeLlamaBackend() {
         llama_backend_init()
@@ -187,32 +188,10 @@ enum LlamaKitBridge {
     }
 
     static func tokenize(text: String, model: CLlamaModel, addBos: Bool, parseSpecial: Bool) throws -> [CLlamaToken] {
-        // First check if model has valid vocabulary
-        let vocabSize = getModelVocabularySize(model: model)
-        guard vocabSize > 0 else {
-            print("🦙 KuzcoBridge Error: Model has invalid vocabulary size: \(vocabSize). Model may not have a tokenizer. 🦙")
-            throw KuzcoError.tokenizationFailed(details: "Model vocabulary size is \(vocabSize) - model may not have a valid tokenizer")
-        }
-        
-        // Check if this is a Gemma model and handle specially
-        if let arch = getModelArchitecture(model: model), arch.lowercased().contains("gemma") {
-            print("🦙 KuzcoBridge Warning: Gemma model detected. Tokenizer may not be fully compatible. 🦙")
-            // For Gemma models, try with specific settings
-            // Gemma models typically don't add BOS automatically
-            let gemmaAddBos = false
-            let gemmaParseSpecial = false
-            
-            let maxTokenCount = text.utf8.count * 2 + 10 // More buffer for Gemma
-            var tokens = [CLlamaToken](repeating: 0, count: maxTokenCount)
-            
-            let count = llama_tokenize(model, text, Int32(text.utf8.count), &tokens, Int32(maxTokenCount), gemmaAddBos, gemmaParseSpecial)
-            
-            if count < 0 {
-                print("🦙 KuzcoBridge Error: Gemma tokenization failed. This model may require a different llama.cpp build. 🦙")
-                throw KuzcoError.tokenizationFailed(details: "Gemma tokenization failed with code \(count). The model may be incompatible with the current llama.cpp version.")
-            }
-            
-            return Array(tokens.prefix(Int(count)))
+        // This should be checked before calling tokenize, but double-check here
+        guard hasUsableTokenizer(model: model) else {
+            print("🦙 KuzcoBridge Error: Attempted to tokenize with model lacking tokenizer 🦙")
+            throw KuzcoError.tokenizationFailed(details: "Model lacks usable tokenizer. Please use a GGUF with embedded tokenizer.")
         }
         
         let maxTokenCount = text.utf8.count + (addBos ? 1 : 0) + 1
@@ -382,6 +361,42 @@ enum LlamaKitBridge {
     
     // MARK: Model Configuration Queries
     
+    /// Check if model has a usable tokenizer (not just vocab, but actual tokenizer implementation)
+    static func hasUsableTokenizer(model: CLlamaModel) -> Bool {
+        guard let vocab = llama_model_get_vocab(model) else { 
+            print("🦙 KuzcoBridge: No vocab found in model 🦙")
+            return false 
+        }
+        
+        let tokenCount = llama_vocab_n_tokens(vocab)
+        if tokenCount <= 0 { 
+            print("🦙 KuzcoBridge: Vocab has no tokens (count: \(tokenCount)) 🦙")
+            return false 
+        }
+        
+        // Check vocab type - NONE means no tokenizer
+        let vocabType = llama_vocab_type(vocab)
+        if vocabType == llama_vocab_type(rawValue: 0) { // LLAMA_VOCAB_TYPE_NONE
+            print("🦙 KuzcoBridge: Vocab type is NONE - no tokenizer implementation 🦙")
+            return false
+        }
+        
+        // Log the tokenizer type for debugging
+        let typeStr: String
+        switch vocabType.rawValue {
+        case 1: typeStr = "SPM (SentencePiece)"  // LLAMA_VOCAB_TYPE_SPM
+        case 2: typeStr = "BPE (Byte-Pair Encoding)"  // LLAMA_VOCAB_TYPE_BPE
+        case 3: typeStr = "WPM (WordPiece)"  // LLAMA_VOCAB_TYPE_WPM
+        case 4: typeStr = "UGM (Unigram)"  // LLAMA_VOCAB_TYPE_UGM
+        case 5: typeStr = "RWKV"  // LLAMA_VOCAB_TYPE_RWKV
+        case 6: typeStr = "PLaMo-2"  // LLAMA_VOCAB_TYPE_PLAMO2
+        default: typeStr = "Unknown(\(vocabType.rawValue))"
+        }
+        print("🦙 KuzcoBridge: Tokenizer type: \(typeStr), token count: \(tokenCount) 🦙")
+        
+        return true
+    }
+    
     static func shouldAddBOSToken(model: CLlamaModel) -> Bool {
         // Get the vocab from the model and check its BOS preference
         let vocab = llama_model_get_vocab(model)
@@ -434,5 +449,34 @@ enum LlamaKitBridge {
         
         // Default to supporting special tokens if not explicitly disabled
         return got <= 0 || String(cString: buf) != "false"
+    }
+    
+    /// Get diagnostic information about the model and llama.cpp version
+    static func getModelDiagnostics(model: CLlamaModel) -> String {
+        var diagnostics = "🦙 Model Diagnostics:\n"
+        
+        // Get llama.cpp commit/version if available
+        var buf = [CChar](repeating: 0, count: 128)
+        _ = buf.withUnsafeMutableBufferPointer { ptr in
+            llama_model_meta_val_str(model, "llama.cpp.commit", ptr.baseAddress, ptr.count)
+        }
+        if buf[0] != 0 {
+            diagnostics += "  llama.cpp commit: \(String(cString: buf))\n"
+        }
+        
+        // Architecture
+        if let arch = getModelArchitecture(model: model) {
+            diagnostics += "  Architecture: \(arch)\n"
+        }
+        
+        // Tokenizer info
+        diagnostics += "  Has tokenizer: \(hasUsableTokenizer(model: model))\n"
+        diagnostics += "  Vocab size: \(getModelVocabularySize(model: model))\n"
+        
+        // BOS/EOS preferences
+        diagnostics += "  Add BOS: \(shouldAddBOSToken(model: model))\n"
+        diagnostics += "  Add EOS: \(shouldAddEOSToken(model: model))\n"
+        
+        return diagnostics
     }
 }
